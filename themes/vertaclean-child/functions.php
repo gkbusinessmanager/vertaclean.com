@@ -820,12 +820,14 @@ function custom_cart_item_subtotal( $subtotal, $cart_item, $cart_item_key ) {
 }
 
 function replace_subscription_string($original_string, $product_id) {
-	$modified_string = str_replace(
+	/* $modified_string = str_replace(
 		array("with month", "free trial and a", "sign-up fee"), // find this
 		array("after 1st month", "", "today"),  // replace with this
 		$original_string
 	);
-	return $modified_string;
+	// return $modified_string; */
+	return '<span class="price"><span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">$</span>99.00</bdi></span> today <span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">$</span>19.00</bdi></span>  every 30 days afterward</span>';
+	
 }
 
 
@@ -837,17 +839,27 @@ function replace_subscription_string($original_string, $product_id) {
 
 
 /// trigger subscription every 4th month
-/**
- * Auto-create refill order every 4th renewal (Flexible Subscriptions)
- */
-
-// Create refill order on every 4th renewal
-add_action( 'flexible_subscriptions/renewal_order_created', function( $renewal_order_id, $subscription ) {
-    if ( ! $subscription || ! $renewal_order_id ) {
+// Create refill order on every 4th renewal for subscription product ID 3208 only
+add_action( 'fsub/subscription_renewal/created', function( $payment_request, $subscription ) {
+    if ( ! $subscription || ! $payment_request ) {
         return;
     }
-	
-	
+
+    // ✅ Check subscription items for target product 3208
+    $target_product_id = 3208;
+    $has_target_product = false;
+
+    foreach ( $subscription->get_items() as $item ) {
+        if ( (int) $item->get_product_id() === $target_product_id ) {
+            $has_target_product = true;
+            break;
+        }
+    }
+
+    if ( ! $has_target_product ) {
+        return; // Exit if this subscription is not for product 3208
+    }
+
     // Count total completed renewals
     $renewal_count = $subscription->get_meta( '_renewal_count', true );
     $renewal_count = $renewal_count ? intval( $renewal_count ) : 0;
@@ -864,15 +876,16 @@ add_action( 'flexible_subscriptions/renewal_order_created', function( $renewal_o
 
     // Create refill order
     $user_id = $subscription->get_user_id();
-	
-	/////////////////////////
-	$order_id = $subscription->get_parent_id();
-	$subscription_order_details = get_ordered_variation_id($order_id);
-	$refill_product_id = $subscription_order_details["matching_variation_id"];
-	$quantity = $subscription_order_details["quantity"];
-	/////////////////////////
-	
+
+    /////////////////////////
+    $order_id = $subscription->get_parent_id();
+    $subscription_order_details = get_ordered_variation_id( $order_id );
+    $refill_product_id = $subscription_order_details["matching_variation_id"];
+    $quantity          = $subscription_order_details["quantity"];
+    /////////////////////////
+
     $order = wc_create_order( [ 'customer_id' => $user_id ] );
+    // $order = $payment_request;
     $order->add_product( wc_get_product( $refill_product_id ), $quantity );
 
     // Copy billing + shipping details from subscription
@@ -882,7 +895,8 @@ add_action( 'flexible_subscriptions/renewal_order_created', function( $renewal_o
     $order->calculate_totals();
     $order->update_status( 'processing', 'Auto-created refill order (every 4th renewal)' );
 
-}, 10, 2 );
+}, 9999, 2 );
+
 
 
 /**
@@ -903,10 +917,20 @@ add_action( 'init', function() {
         }
 		
         // Fake renewal order (empty order for testing)
-        $test_order = wc_create_order( [ 'customer_id' => $subscription->get_user_id() ] );
-        do_action( 'flexible_subscriptions/renewal_order_created', $test_order->get_id(), $subscription );
-
-        wp_die( 'Test refill process triggered for subscription #' . $sub_id );
+		$test_order = wc_create_order(
+			[
+				'customer_id'   => $subscription->get_user_id(),
+				'customer_note' => $subscription->get_customer_note(),
+				'created_via'   => 'subscription',
+				'parent'        => $subscription->get_id(),
+			]
+		);
+		do_action( 'fsub/subscription_renewal/created', $test_order, $subscription );
+		
+		// Count total completed renewals
+		$renewal_count = $subscription->get_meta( '_renewal_count', true );
+		$updtaed_renewal_count = $renewal_count ? intval( $renewal_count ) : 0;
+        wp_die( 'Test refill process triggered for subscription #' . $sub_id. '. Current payment cycle = '.$updtaed_renewal_count );
     }
 });
 
